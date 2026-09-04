@@ -26,6 +26,10 @@ int main() {
             break;
         }
 
+        if (user_input[0] == '\0') {
+            continue;
+        }
+
         char *args[64];
 
         int i = 0;
@@ -64,6 +68,10 @@ int main() {
             int status;
 
             waitpid(pid, &status, 0);
+
+            if (WIFEXITED(status) && WEXITSTATUS(status) == 1) {
+                printf("\nCommand \'%s\' not found\n", args[0]);
+            }
         }
     } 
 
