@@ -5,54 +5,81 @@
 #include <unistd.h>
 #include <string.h>
 
+int get_input(char *input, size_t input_size) {
+    int valid = 0;
+
+    if (fgets(input, input_size, stdin) == NULL) {
+        valid = 1;
+    }
+
+    input[strcspn(input, "\n")] = '\0';
+
+    if (strcmp(input, "q") == 0) {
+        valid = 1;
+    }
+
+    return valid;
+}
+
+void tokenize_input(char **args, char *input) {
+    int i = 0;
+
+    char *token = strtok(input, " \t\n");
+
+    while (token != NULL) {
+        args[i] = token;
+        i++;
+
+        token = strtok(NULL, " \t\n");
+    }
+
+    args[i] = NULL;
+}
+
+int change_directory(char **args) {
+    if (strcmp(args[0], "cd") == 0) {
+        if (chdir(args[1]) == -1) {
+            perror("chdir");
+        }
+
+        return 1;
+    }
+
+    return 0;
+}
+
 int main() {
     char cwd[1024];
     char user_input[1024];
+    char *args[64];
 
     while (1) {
+        // Prints the Current Working Directory followed by $ for signalling user input
         if (getcwd(cwd, sizeof(cwd)) != NULL) {
             printf("%s $ ", cwd);
         } else {
             perror("getcwd");
         }
 
-        if (fgets(user_input, sizeof(user_input), stdin) == NULL) {
-            break;
-        } 
-
-        user_input[strcspn(user_input, "\n")] = '\0';
-
-        if (strcmp(user_input, "q") == 0) {
+        // Gets user input
+        if (get_input(user_input, sizeof(user_input))) {
             break;
         }
 
+        // Check for if no command is entered and skips the rest of the loop if no command
         if (user_input[0] == '\0') {
             continue;
         }
+        
+        // Tokenizes input into args
+        tokenize_input(args, user_input);
 
-        char *args[64];
-
-        int i = 0;
-
-        char *token = strtok(user_input, " \t\n");
-
-        while (token != NULL) {
-            args[i] = token;
-            i++;
-
-            token = strtok(NULL, " \t\n");
-        }
-
-        args[i] = NULL;
-
-        if (strcmp(args[0], "cd") == 0) {
-            if (chdir(args[1]) == -1) {
-                perror("chdir");
-            }
-
+        // Changes directory with command 'cd'
+        if (change_directory(args)) {
             continue;
         }
 
+        // ------------------------- Fork -------------------------
         pid_t pid = fork();
 
         if (pid < 0) {
