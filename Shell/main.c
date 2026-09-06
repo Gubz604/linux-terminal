@@ -1,9 +1,10 @@
 #include <sys/wait.h>
 #include <sys/types.h>
-#include<stdlib.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <string.h>
+#include <signal.h>
 
 int get_input(char *input, size_t input_size) {
     int valid = 0;
@@ -53,6 +54,16 @@ int change_directory(char **args) {
     return 0;
 }
 
+void handle_sigchld(int sig) {
+    while (waitpid(-1, NULL, WNOHANG) > 0) {
+        write(
+            STDOUT_FILENO, 
+            "\nShell: Background process finished\n", 
+            sizeof("\nShell: Background process finished\n") - 1
+        );
+    }
+}
+
 int main() {
     char cwd[1024];
     char user_input[1024];
@@ -60,6 +71,8 @@ int main() {
 
     while (1) {
         int background = 0;
+
+        signal(SIGCHLD, handle_sigchld); // signal handler for reaping background child processes
 
         // Prints the Current Working Directory followed by $ for signalling user input
         if (getcwd(cwd, sizeof(cwd)) != NULL) {
@@ -103,10 +116,6 @@ int main() {
 
             if (!background) {
                 waitpid(pid, &status, 0);
-            }
-
-            while (waitpid(-1, NULL, WNOHANG) > 0) {
-                
             }
 
             if (WIFEXITED(status) && WEXITSTATUS(status) == 1) {
