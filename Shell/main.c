@@ -21,7 +21,7 @@ int get_input(char *input, size_t input_size) {
     return valid;
 }
 
-void tokenize_input(char **args, char *input) {
+void tokenize_input(char **args, char *input, int *background) {
     int i = 0;
 
     char *token = strtok(input, " \t\n");
@@ -34,6 +34,11 @@ void tokenize_input(char **args, char *input) {
     }
 
     args[i] = NULL;
+    
+    if (strcmp(args[i - 1], "&") == 0) {
+        *background = 1;
+        args[i - 1] = NULL;
+    }
 }
 
 int change_directory(char **args) {
@@ -54,6 +59,8 @@ int main() {
     char *args[64];
 
     while (1) {
+        int background = 0;
+
         // Prints the Current Working Directory followed by $ for signalling user input
         if (getcwd(cwd, sizeof(cwd)) != NULL) {
             printf("%s $ ", cwd);
@@ -72,7 +79,7 @@ int main() {
         }
         
         // Tokenizes input into args
-        tokenize_input(args, user_input);
+        tokenize_input(args, user_input, &background);
 
         // Changes directory with command 'cd'
         if (change_directory(args)) {
@@ -94,7 +101,13 @@ int main() {
             // Parent Process
             int status;
 
-            waitpid(pid, &status, 0);
+            if (!background) {
+                waitpid(pid, &status, 0);
+            }
+
+            while (waitpid(-1, NULL, WNOHANG) > 0) {
+                
+            }
 
             if (WIFEXITED(status) && WEXITSTATUS(status) == 1) {
                 printf("\nCommand \'%s\' not found\n", args[0]);
