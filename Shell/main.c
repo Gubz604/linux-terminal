@@ -6,7 +6,17 @@
 #include <string.h>
 #include <signal.h>
 
-int get_input(char *input, size_t input_size) {
+void handle_exit(pid_t *background_pids, int background_count) {
+    for (int i = 0; i < background_count; i++) {
+        kill(background_pids[i], SIGTERM);
+    }
+
+    for (int i = 0; i < background_count; i++) {
+        waitpid(background_pids[i], NULL, 0);
+    }
+}
+
+int get_input(char *input, size_t input_size, pid_t *background_pids, int background_count) {
     int valid = 0;
 
     if (fgets(input, input_size, stdin) == NULL) {
@@ -15,7 +25,8 @@ int get_input(char *input, size_t input_size) {
 
     input[strcspn(input, "\n")] = '\0';
 
-    if (strcmp(input, "q") == 0) {
+    if (strcmp(input, "exit") == 0) {
+        handle_exit(background_pids, background_count);
         valid = 1;
     }
 
@@ -68,11 +79,13 @@ int main() {
     char cwd[1024];
     char user_input[1024];
     char *args[64];
+    pid_t background_pids[64];
+    int background_count = 0;
+
+    signal(SIGCHLD, handle_sigchld); // signal handler for reaping background child processes
 
     while (1) {
         int background = 0;
-
-        signal(SIGCHLD, handle_sigchld); // signal handler for reaping background child processes
 
         // Prints the Current Working Directory followed by $ for signalling user input
         if (getcwd(cwd, sizeof(cwd)) != NULL) {
@@ -82,7 +95,7 @@ int main() {
         }
 
         // Gets user input
-        if (get_input(user_input, sizeof(user_input))) {
+        if (get_input(user_input, sizeof(user_input), background_pids, background_count)) {
             break;
         }
 
@@ -113,6 +126,11 @@ int main() {
         } else if (pid > 0) {
             // Parent Process
             int status;
+
+            if (background) {
+                background_pids[background_count] = pid;
+                background_count++;
+            }
 
             if (!background) {
                 waitpid(pid, &status, 0);
