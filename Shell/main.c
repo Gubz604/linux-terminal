@@ -6,6 +6,8 @@
 #include <string.h>
 #include <signal.h>
 
+volatile sig_atomic_t foreground_pid = -1;
+
 void handle_exit(pid_t *background_pids, int background_count) {
     for (int i = 0; i < background_count; i++) {
         kill(background_pids[i], SIGTERM);
@@ -65,13 +67,15 @@ int change_directory(char **args) {
     return 0;
 }
 
-void handle_sigchld(int sig) {
+void reap_background_processes() {
     while (waitpid(-1, NULL, WNOHANG) > 0) {
-        write(
-            STDOUT_FILENO, 
-            "\nShell: Background process finished\n", 
-            sizeof("\nShell: Background process finished\n") - 1
-        );
+        printf("Shell: Background process finished\n");
+    }
+}
+
+void handle_sigint(int sig){
+    if (foreground_pid > 0) {
+        kill(-(pid_t)foreground_pid, SIGINT);
     }
 }
 
@@ -82,10 +86,12 @@ int main() {
     pid_t background_pids[64];
     int background_count = 0;
 
-    signal(SIGCHLD, handle_sigchld); // signal handler for reaping background child processes
+    signal(SIGINT, handle_sigint);
 
     while (1) {
         int background = 0;
+
+        reap_background_processes();
 
         // Prints the Current Working Directory followed by $ for signalling user input
         if (getcwd(cwd, sizeof(cwd)) != NULL) {
@@ -121,6 +127,8 @@ int main() {
         } else if (pid == 0) {
             // Child Process
 
+            setpgid(0, 0);
+
             execvp(args[0], args);
             exit(1);
         } else if (pid > 0) {
@@ -133,7 +141,9 @@ int main() {
             }
 
             if (!background) {
+                foreground_pid = pid;
                 waitpid(pid, &status, 0);
+                foreground_pid = -1;
             }
 
             if (WIFEXITED(status) && WEXITSTATUS(status) == 1) {
