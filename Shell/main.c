@@ -58,20 +58,30 @@ int tokenize_input(char **args, char *input, int *background) {
     return i;
 }
 
-void count_commands(char **args, int args_length, char ***commands, int *command_count) {
-    for (int i = 0; i < args_length; i++) {
-        if (strcmp(args[i], "&&") == 0) {
-            args[i] = NULL;
-        }
+void count_commands(char **args, int args_length,
+                    char ***commands, int *command_count,
+                    int *parallel)
+{
+    *command_count = 0;
+    *parallel = 0;
+
+    if (args_length == 0) {
+        return;
     }
 
-    commands[0] = &args[0];
-    (*command_count)++;
+    commands[(*command_count)++] = &args[0];
 
-    for (int i = 1; i < args_length; i++) {
-        if (args[i] == NULL) {
-            commands[*command_count] = &args[i + 1];
-            (*command_count)++;
+    for (int i = 0; i < args_length; i++) {
+        int serial_separator = strcmp(args[i], "&&") == 0;
+        int parallel_separator = strcmp(args[i], "&&&") == 0;
+
+        if (serial_separator || parallel_separator) {
+            if (parallel_separator) {
+                *parallel = 1;
+            }
+
+            args[i] = NULL;
+            commands[(*command_count)++] = &args[i + 1];
         }
     }
 }
@@ -94,6 +104,18 @@ void reap_background_processes() {
     }
 }
 
+void wait_for_child(pid_t pid) {
+    pid_t result;
+
+    do {
+        result = waitpid(pid, NULL, 0);
+    } while (result == -1 && errno == EINTR);
+
+    if (result == -1) {
+        perror("waitpid");
+    }
+}
+
 void handle_sigint(int sig){
     if (foreground_pid > 0) {
         kill(-(pid_t)foreground_pid, SIGINT);
@@ -113,6 +135,7 @@ int main() {
     while (1) {
         int background = 0;
         int command_count = 0;
+        int parallel = 0;
 
         reap_background_processes();
 
@@ -136,7 +159,11 @@ int main() {
         // Tokenizes input into args
         int token_count = tokenize_input(args, user_input, &background);
 
-        count_commands(args, token_count, commands, &command_count);
+        if (token_count == 0) {
+            continue;
+        }
+
+        count_commands(args, token_count, commands, &command_count, &parallel);
 
         // Changes directory with command 'cd'
         if (change_directory(args)) {
@@ -144,12 +171,15 @@ int main() {
         }
 
         // ------------------------- Fork -------------------------
+        pid_t parallel_pids[64];
+        int parallel_count = 0;
+
         for (int i = 0; i < command_count; i++) {
             pid_t pid = fork();
 
             if (pid < 0) {
                 perror("Fork failed");
-                exit(1);
+                break;
             } else if (pid == 0) {
                 // Child Process
 
@@ -160,19 +190,20 @@ int main() {
                 exit(1);
             } else if (pid > 0) {
                 // Parent Process
-                int status;
-
-                if (background) {
-                    background_pids[background_count] = pid;
-                    background_count++;
-                }
-
-                if (!background) {
+                if (parallel) {
+                    parallel_pids[parallel_count++] = pid;
+                } else if (background) {
+                    background_pids[background_count++] = pid;
+                } else {
                     foreground_pid = pid;
-                    waitpid(pid, &status, 0);
+                    wait_for_child(pid);
                     foreground_pid = -1;
                 }
             }
+        }
+
+        for (int i = 0; i < parallel_count; i++) {
+            wait_for_child(parallel_pids[i]);
         }
     } 
 
