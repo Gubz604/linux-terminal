@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <signal.h>
+#include <errno.h>
 
 volatile sig_atomic_t foreground_pid = -1;
 
@@ -35,7 +36,7 @@ int get_input(char *input, size_t input_size, pid_t *background_pids, int backgr
     return valid;
 }
 
-void tokenize_input(char **args, char *input, int *background) {
+int tokenize_input(char **args, char *input, int *background) {
     int i = 0;
 
     char *token = strtok(input, " \t\n");
@@ -49,9 +50,29 @@ void tokenize_input(char **args, char *input, int *background) {
 
     args[i] = NULL;
     
-    if (strcmp(args[i - 1], "&") == 0) {
+    if (i > 0 && strcmp(args[i - 1], "&") == 0) {
         *background = 1;
-        args[i - 1] = NULL;
+        args[--i] = NULL;
+    }
+
+    return i;
+}
+
+void count_commands(char **args, int args_length, char ***commands, int *command_count) {
+    for (int i = 0; i < args_length; i++) {
+        if (strcmp(args[i], "&&") == 0) {
+            args[i] = NULL;
+        }
+    }
+
+    commands[0] = &args[0];
+    (*command_count)++;
+
+    for (int i = 1; i < args_length; i++) {
+        if (args[i] == NULL) {
+            commands[*command_count] = &args[i + 1];
+            (*command_count)++;
+        }
     }
 }
 
@@ -85,11 +106,13 @@ int main() {
     char *args[64];
     pid_t background_pids[64];
     int background_count = 0;
+    char **commands[64];
 
     signal(SIGINT, handle_sigint);
 
     while (1) {
         int background = 0;
+        int command_count = 0;
 
         reap_background_processes();
 
@@ -111,7 +134,9 @@ int main() {
         }
         
         // Tokenizes input into args
-        tokenize_input(args, user_input, &background);
+        int token_count = tokenize_input(args, user_input, &background);
+
+        count_commands(args, token_count, commands, &command_count);
 
         // Changes directory with command 'cd'
         if (change_directory(args)) {
@@ -119,35 +144,34 @@ int main() {
         }
 
         // ------------------------- Fork -------------------------
-        pid_t pid = fork();
+        for (int i = 0; i < command_count; i++) {
+            pid_t pid = fork();
 
-        if (pid < 0) {
-            perror("Fork failed");
-            exit(1);
-        } else if (pid == 0) {
-            // Child Process
+            if (pid < 0) {
+                perror("Fork failed");
+                exit(1);
+            } else if (pid == 0) {
+                // Child Process
 
-            setpgid(0, 0);
+                setpgid(0, 0);
 
-            execvp(args[0], args);
-            exit(1);
-        } else if (pid > 0) {
-            // Parent Process
-            int status;
+                execvp(commands[i][0], commands[i]);
+                perror(commands[i][0]);
+                exit(1);
+            } else if (pid > 0) {
+                // Parent Process
+                int status;
 
-            if (background) {
-                background_pids[background_count] = pid;
-                background_count++;
-            }
+                if (background) {
+                    background_pids[background_count] = pid;
+                    background_count++;
+                }
 
-            if (!background) {
-                foreground_pid = pid;
-                waitpid(pid, &status, 0);
-                foreground_pid = -1;
-            }
-
-            if (WIFEXITED(status) && WEXITSTATUS(status) == 1) {
-                printf("\nCommand \'%s\' not found\n", args[0]);
+                if (!background) {
+                    foreground_pid = pid;
+                    waitpid(pid, &status, 0);
+                    foreground_pid = -1;
+                }
             }
         }
     } 
